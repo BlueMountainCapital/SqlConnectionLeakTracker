@@ -63,7 +63,7 @@ namespace TestApp
                 Console.WriteLine(openConnections);
             }
 
-            var instantiatedConnections = GetString(SqlConnectionLeakTracker.SqlConnectionWrapper.PrintInstantiatedConnections);
+            var instantiatedConnections = GetString(stream => SqlConnectionLeakTracker.SqlConnectionWrapper.PrintInstantiatedOpenConnections(stream));
             if (!CompareStackTraces(ExpectedInstantiatedConnections, instantiatedConnections))
             {
                 Console.WriteLine("ERROR does not match expected");

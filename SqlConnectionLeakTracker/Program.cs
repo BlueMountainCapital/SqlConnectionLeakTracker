@@ -17,19 +17,29 @@ namespace SqlConnectionLeakTracker
 {
     public static class SqlConnectionWrapper
     {
+        /// <summary>Keeps track of instantiated SqlConnection objects that haven't been closed/disposed</summary>
         private static ConcurrentDictionary<SqlConnection, string> _instantiatedConnections = new ConcurrentDictionary<SqlConnection, string>();
+        /// <summary>Keeps track of all SqlConnection objects that have had open called on them that haven't been closed/disposed</summary>
         private static ConcurrentDictionary<SqlConnection, string> _openedConnections = new ConcurrentDictionary<SqlConnection, string>();
+        /// <summary>Keeps track of all SqlConnection objects that have had open called on them (regardless of whether they've been closed/disposed</summary>
+        private static ConcurrentDictionary<SqlConnection, string> _allOpenedConnections = new ConcurrentDictionary<SqlConnection, string>();
 
-        public static void PrintInstantiatedConnections(string filename, bool append = false)
+        private static IReadOnlyList<KeyValuePair<SqlConnection, string>> GetInstantiatedOpenConnections()
+            => _instantiatedConnections.Where(c => c.Key.State != ConnectionState.Closed).ToList();
+
+        public static void PrintInstantiatedOpenConnections(string filename, bool append = false)
         {
-            if (_instantiatedConnections.Count > 0)
+            var instantiatedOpenConnections = GetInstantiatedOpenConnections();
+
+            if (instantiatedOpenConnections.Count > 0)
                 using (var f = File.Open(filename, append ? FileMode.OpenOrCreate : FileMode.Create))
-                    PrintInstantiatedConnections(f);
+                    PrintInstantiatedOpenConnections(f, instantiatedOpenConnections);
         }
 
-        public static void PrintInstantiatedConnections(Stream stream)
+        public static void PrintInstantiatedOpenConnections(Stream stream, IReadOnlyList<KeyValuePair<SqlConnection, string>> instantiatedOpenConnections = null)
         {
-            PrintConnections(stream, _instantiatedConnections.Count, _instantiatedConnections.Values, "instantiated connections");
+            instantiatedOpenConnections = instantiatedOpenConnections ?? GetInstantiatedOpenConnections();
+            PrintConnections(stream, instantiatedOpenConnections.Count, instantiatedOpenConnections.Select(kvp => kvp.Value), "instantiated and unclosed connections");
         }
 
         public static void PrintOpenConnections(string filename, bool append = false)
@@ -42,6 +52,32 @@ namespace SqlConnectionLeakTracker
         public static void PrintOpenConnections(Stream stream)
         {
             PrintConnections(stream, _openedConnections.Count, _openedConnections.Values, "open connections");
+        }
+
+        private static IReadOnlyList<IGrouping<string, string>> GetAllOpenedConnectionStrings()
+            => _allOpenedConnections.GroupBy(kvp => kvp.Key.ConnectionString, kvp => kvp.Value).ToList();
+
+        public static void PrintAllOpenedConnectionStrings(string filename, bool append = false)
+        {
+            var groups = GetAllOpenedConnectionStrings();
+            if (groups.Count > 0)
+                using (var f = File.Open(filename, append ? FileMode.OpenOrCreate : FileMode.Create))
+                    PrintAllOpenedConnectionStrings(f, groups);
+        }
+
+        public static void PrintAllOpenedConnectionStrings(Stream stream, IReadOnlyList<IGrouping<string, string>> groups)
+        {
+            groups = groups ?? GetAllOpenedConnectionStrings();
+
+            using (var sw = new StreamWriter(stream, Encoding.UTF8, 1024, true))
+            {
+                sw.WriteLine($"{groups.Count} unique opened connection strings");
+                foreach (var gr in groups)
+                {
+                    sw.WriteLine($"{gr.Count()} places opened {gr.Key}");
+                    sw.WriteLine(string.Join("\n-----\n", gr));
+                }
+            }
         }
 
         private static void PrintConnections(Stream stream, int stackTraceCount, IEnumerable<string> stackTraces, string countMessage)
@@ -125,7 +161,11 @@ namespace SqlConnectionLeakTracker
         private static void RegisterOpened(SqlConnection conn)
         {
             if (conn != null)
-                _openedConnections[conn] = Environment.StackTrace;
+            {
+                var st = Environment.StackTrace;
+                _openedConnections[conn] = st;
+                _allOpenedConnections[conn] = st;
+            }
         }
 
         
